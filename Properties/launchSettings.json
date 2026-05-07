@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "release-builder": {
+      "commandName": "Project",
+      "commandLineArgs": "--version 2.2.0"
+    },
+  }
+}
