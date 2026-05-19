@@ -13,6 +13,14 @@ public class BuildService
 
         try
         {
+
+            var restoreResult = await RunDotnetAsync($"restore \"{solutionPath}\"");
+
+            if (!restoreResult.Success)
+            {
+                return (false, $"Restore failed: {restoreResult.Output}");
+            }
+
             var cleanResult = await RunDotnetAsync($"clean \"{solutionPath}\" -v quiet");
 
             if (!cleanResult.Success)
@@ -20,7 +28,7 @@ public class BuildService
                 return (false, $"Clean failed: {cleanResult.Output}");
             }
 
-            var buildResult = await RunDotnetAsync($"build \"{solutionPath}\" --no-incremental");
+            var buildResult = await RunDotnetAsync($"build \"{solutionPath}\" --no-incremental --no-restore");
 
             return buildResult;
         }
