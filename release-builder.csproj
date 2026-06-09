@@ -8,6 +8,7 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+		<RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
 
 		<Version>0.1.0</Version>
 		<Authors>Lucas Mendonça da Silva Junior</Authors>
