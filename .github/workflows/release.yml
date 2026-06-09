@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Resolve version from tag
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart('v')
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "zipname=release-builder-$tag-win-x64.zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Publish single-file exe
+        run: >
+          dotnet publish release-builder.csproj
+          -c Release
+          -r win-x64
+          -p:Version=${{ steps.ver.outputs.version }}
+          -o publish
+
+      - name: Stage release artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path stage | Out-Null
+          Copy-Item publish/release-builder.exe stage/
+          Copy-Item installer/install.bat stage/
+          Copy-Item installer/uninstall.bat stage/
+          Copy-Item examples stage/examples -Recurse
+
+      - name: Create ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive -Path stage/* -DestinationPath ${{ steps.ver.outputs.zipname }} -Force
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.ver.outputs.zipname }}
+          generate_release_notes: true

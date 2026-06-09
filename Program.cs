@@ -1,4 +1,4 @@
-﻿using release_builder.Model;
+using release_builder.Model;
 using release_builder.Models;
 using release_builder.Services;
 using System.Diagnostics;
@@ -8,30 +8,44 @@ namespace release_builder;
 
 public class Program
 {
+    private const string AppFolderName = "release-builder";
+    private const string ConfigFileName = "appsettings.json";
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
         ReadCommentHandling = JsonCommentHandling.Skip
     };
 
+    private static readonly JsonSerializerOptions TemplateWriteOptions = new()
+    {
+        WriteIndented = true
+    };
+
     public static async Task<int> Main(string[] args)
     {
-        var version = ParseVersion(args);
+        var parsedArgs = ParseArgs(args);
 
-        if (version is null)
+        if (parsedArgs.ShowConfigPath)
+        {
+            Console.WriteLine(GetDefaultConfigPath());
+            return 0;
+        }
+
+        if (parsedArgs.Version is null)
         {
             PrintUsage();
             return 1;
         }
 
-        ConsoleLogger.Header($"Release Builder — version {version}");
+        ConsoleLogger.Header($"Release Builder — version {parsedArgs.Version}");
 
-        var config = LoadConfig();
+        var configPath = parsedArgs.ConfigPath ?? GetDefaultConfigPath();
+        var config = LoadConfig(configPath, parsedArgs.ConfigPath is not null);
 
         if (config is null)
         {
-            ConsoleLogger.Error("Failed to load appsettings.json");
-            return 1;
+            return 2;
         }
 
         if (!Directory.Exists(config.RootPath))
@@ -42,8 +56,9 @@ public class Program
 
         ConsoleLogger.Info($"Root path: {config.RootPath}");
         ConsoleLogger.Info($"Repositories: {config.Repositories.Count}");
-        ConsoleLogger.Info($"Target branch: release/{version}");
+        ConsoleLogger.Info($"Target branch: release/{parsedArgs.Version}");
         ConsoleLogger.Info($"Stop on error: {config.StopOnError}");
+        ConsoleLogger.Info($"Config loaded from: {configPath}");
 
         var gitService = new GitService();
         var buildService = new BuildService();
@@ -59,7 +74,7 @@ public class Program
             ConsoleLogger.SubHeader($"[{i + 1}/{config.Repositories.Count}] {repo.Name}");
 
             var result = await ProcessRepositoryAsync(
-                gitService, buildService, repo, repoPath, solutionPath, version);
+                gitService, buildService, repo, repoPath, solutionPath, parsedArgs.Version);
 
             results.Add(result);
 
@@ -164,36 +179,60 @@ public class Program
         return result;
     }
 
-    private static string? ParseVersion(string[] args)
+    private record CliArgs(string? Version, string? ConfigPath, bool ShowConfigPath);
+
+    private static CliArgs ParseArgs(string[] args)
     {
-        for (var i = 0; i < args.Length - 1; i++)
+        string? version = null;
+        string? configPath = null;
+        var showConfigPath = false;
+
+        for (var i = 0; i < args.Length; i++)
         {
-            if (args[i] is "--version" or "-v")
+            var arg = args[i];
+
+            switch (arg)
             {
-                return args[i + 1];
+                case "--version" or "-v" when i + 1 < args.Length:
+                    version = args[++i];
+                    break;
+                case "--config" or "-c" when i + 1 < args.Length:
+                    configPath = args[++i];
+                    break;
+                case "--config-path":
+                    showConfigPath = true;
+                    break;
+                default:
+                    if (version is null && !arg.StartsWith('-'))
+                    {
+                        version = arg;
+                    }
+                    break;
             }
         }
 
-        if (args.Length == 1 && !args[0].StartsWith('-'))
-        {
-            return args[0];
-        }
-
-        return null;
+        return new CliArgs(version, configPath, showConfigPath);
     }
 
-    private static BuildConfig LoadConfig()
+    private static string GetDefaultConfigPath()
     {
-        var configPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        return Path.Combine(appData, AppFolderName, ConfigFileName);
+    }
 
+    private static BuildConfig? LoadConfig(string configPath, bool configPathExplicit)
+    {
         if (!File.Exists(configPath))
         {
-            configPath = Path.Combine(Directory.GetCurrentDirectory(), "appsettings.json");
-        }
+            if (configPathExplicit)
+            {
+                ConsoleLogger.Error($"Config file not found at: {configPath}");
+                return null;
+            }
 
-        if (!File.Exists(configPath))
-        {
-            ConsoleLogger.Error($"Config file not found at: {configPath}");
+            CreateTemplateConfig(configPath);
+            ConsoleLogger.Warning($"Config criada em: {configPath}");
+            ConsoleLogger.Warning("Edite o arquivo com seus repositórios e rode novamente.");
             return null;
         }
 
@@ -207,6 +246,30 @@ public class Program
             ConsoleLogger.Error($"Failed to parse config: {ex.Message}");
             return null;
         }
+    }
+
+    private static void CreateTemplateConfig(string configPath)
+    {
+        var directory = Path.GetDirectoryName(configPath);
+
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        var template = new BuildConfig
+        {
+            RootPath = "C:\\Repos",
+            StopOnError = false,
+            Repositories =
+            [
+                new RepositoryEntry { Name = "Core.Library", SolutionFile = "Core.Library.sln" },
+                new RepositoryEntry { Name = "Shared.Services", SolutionFile = "Shared.Services.sln" },
+                new RepositoryEntry { Name = "Main.WebApp", SolutionFile = "Main.WebApp.sln" }
+            ]
+        };
+
+        File.WriteAllText(configPath, JsonSerializer.Serialize(template, TemplateWriteOptions));
     }
 
     private static void PrintReport(List<BuildResult> results, TimeSpan totalTime)
@@ -237,11 +300,18 @@ public class Program
     private static void PrintUsage()
     {
         Console.WriteLine("Usage:");
-        Console.WriteLine("  ReleaseBuilder --version <version>");
-        Console.WriteLine("  ReleaseBuilder -v <version>");
-        Console.WriteLine("  ReleaseBuilder <version>");
+        Console.WriteLine("  release-builder --version <version>");
+        Console.WriteLine("  release-builder -v <version>");
+        Console.WriteLine("  release-builder <version>");
         Console.WriteLine();
-        Console.WriteLine("Example:");
-        Console.WriteLine("ReleaseBuilder --version 1.5.0");
+        Console.WriteLine("Options:");
+        Console.WriteLine("  -v, --version <version>   Branch alvo será release/<version>");
+        Console.WriteLine("  -c, --config <path>       Usa um arquivo de config alternativo");
+        Console.WriteLine("      --config-path         Imprime o caminho padrão da config e sai");
+        Console.WriteLine();
+        Console.WriteLine("Config padrão: %APPDATA%\\release-builder\\appsettings.json");
+        Console.WriteLine();
+        Console.WriteLine("Exemplo:");
+        Console.WriteLine("  release-builder --version 1.5.0");
     }
 }
